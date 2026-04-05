@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "rivot-agent",
+  "rivot-server",
+]
+
+resolver = "2"
