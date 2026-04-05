@@ -1,6 +1,7 @@
+mod establish_connections;
 use clap::{Parser, Subcommand};
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use establish_connections::{tcp_connect, tcp_listen};
+use tokio::io;
 
 #[derive(Parser)]
 #[command(name = "rpivot-server", about = "Rusty tunneling tool")]
@@ -25,42 +26,6 @@ enum Commands {
         #[arg(short = 'P', long, default_value_t = 4444)]
         port: u16,
     },
-}
-
-async fn tcp_connect(host: String, port: u16) -> io::Result<()> {
-    println!("Connecting to {host}:{port}");
-
-    let mut socket = TcpStream::connect(format!("{host}:{port}")).await?;
-
-    socket.write_all(b"Hello, World!").await?;
-
-    Ok(())
-}
-
-async fn tcp_listen(host: String, port: u16) {
-    let listener = TcpListener::bind(format!("{host}:{port}")).await.unwrap();
-
-    loop {
-        let (mut socket, _) = listener.accept().await.unwrap();
-
-        tokio::spawn(async move {
-            let mut buf = vec![0; 1024];
-            println!("Connected!");
-            loop {
-                match socket.read(&mut buf).await {
-                    Ok(0) => return,
-                    Ok(n) => {
-                        if socket.write_all(&buf[..n]).await.is_err() {
-                            return;
-                        }
-                    }
-                    Err(_) => {
-                        return;
-                    }
-                }
-            }
-        });
-    }
 }
 
 #[tokio::main]
