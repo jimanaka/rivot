@@ -1,11 +1,10 @@
 mod cli_util;
 mod establish_connections;
-use clap::{Parser, Subcommand};
+// use clap::{Parser, Subcommand};
 use cli_util::run_cli;
 use establish_connections::{tcp_connect, tcp_listen};
 use tokio::io;
 use tokio::sync::mpsc;
-use tokio::task;
 
 use crate::cli_util::CliCommand;
 
@@ -40,20 +39,26 @@ async fn main() -> io::Result<()> {
 
     let (tx, mut rx) = mpsc::channel(32);
 
-    tokio::spawn(async move {
+    let mut tasks = vec![];
+
+    tasks.push(tokio::spawn(async move {
         run_cli(tx).await;
-    });
+    }));
 
     while let Some(cmd) = rx.recv().await {
         match cmd {
             CliCommand::Forward { host, port } => {
-                tokio::spawn(async move { tcp_connect(host, port).await });
+                tasks.push(tokio::spawn(async move { tcp_connect(host, port).await }));
             }
             CliCommand::Reverse { host, port } => {
-                tokio::spawn(async move { tcp_listen(host, port).await });
+                tasks.push(tokio::spawn(async move { tcp_listen(host, port).await }));
             }
             CliCommand::Quit => break,
         }
+    }
+
+    for task in tasks {
+        task.await.unwrap();
     }
 
     Ok(())

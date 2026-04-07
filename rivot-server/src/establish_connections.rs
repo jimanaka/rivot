@@ -1,18 +1,16 @@
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-pub async fn tcp_connect(host: String, port: u16) -> io::Result<()> {
+pub async fn tcp_connect(host: String, port: u16) {
     let mut stdout = io::stdout();
     stdout
         .write(format!("Connecting to {host}:{port}\n").as_bytes())
-        .await?;
-    stdout.flush().await?;
+        .await;
+    stdout.flush().await;
 
-    let mut socket = TcpStream::connect(format!("{host}:{port}")).await?;
+    let mut socket = TcpStream::connect(format!("{host}:{port}")).await.unwrap();
 
-    socket.write_all(b"Hello, World!").await?;
-
-    Ok(())
+    socket.write_all(b"Hello, World!").await.unwrap();
 }
 
 pub async fn tcp_listen(host: String, port: u16) {
