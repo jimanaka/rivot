@@ -3,10 +3,10 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub async fn tcp_connect(host: String, port: u16) {
     let mut stdout = io::stdout();
-    stdout
-        .write(format!("Connecting to {host}:{port}\n").as_bytes())
-        .await;
-    stdout.flush().await;
+
+    stdout.write(b"Connecting...\n").await.unwrap();
+
+    stdout.flush().await.unwrap();
 
     let mut socket = TcpStream::connect(format!("{host}:{port}")).await.unwrap();
 

@@ -1,6 +1,7 @@
+use crate::error::RivotCliError;
 use reedline::{Prompt, PromptEditMode, PromptHistorySearch, Reedline, Signal};
 use std::borrow::Cow;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::task;
 
@@ -8,38 +9,6 @@ pub enum CliCommand {
     Forward { host: String, port: u16 },
     Reverse { host: String, port: u16 },
     Quit,
-}
-
-impl CliCommand {
-    pub fn help() -> &'static str {
-        "Commands:
-  forward    Start a forward tunnel
-  reverse    Start a reverse tunnel
-  help       Show this help message
-  quit       Exit
-
-Use 'help <command>' for more information."
-    }
-
-    pub fn help_forward() -> &'static str {
-        "forward -H <host> -P <port>
-  
-  Start a forward tunnel to the specified host and port.
-  
-  Options:
-    -H, --host    Target host
-    -P, --port    Target port (default: 4444)"
-    }
-
-    pub fn help_reverse() -> &'static str {
-        "reverse -H <host> -P <port>
-  
-  Start a reverse tunnel listening on the specified host and port.
-  
-  Options:
-    -H, --host    Bind host
-    -P, --port    Bind port (default: 4444)"
-    }
 }
 
 struct RivotPrompt;
@@ -63,10 +32,98 @@ impl Prompt for RivotPrompt {
 
     fn render_prompt_history_search_indicator(
         &self,
-        history_search: PromptHistorySearch,
+        _history_search: PromptHistorySearch,
     ) -> Cow<'_, str> {
         Cow::Borrowed("search: ")
     }
+}
+
+fn print_help(command: &str) {
+    match command {
+        "help" => println!(
+            r#"
+forward - Start a forward tunnel
+reverse - Start a reverse tunnel
+help    - Print this help statement"#
+        ),
+        "forward" => println!(
+            r#"
+Start a forward tunnel
+
+Usage: forward -H <host> -P <port>
+
+Options:
+    -H, --host    Target host to forward to
+    -P, --port    Target port
+    -h            Print this help statement
+
+Example:
+    forward -H 192.168.1.10 -P 8080
+"#
+        ),
+        "reverse" => println!(
+            r#"
+Start a reverse tunnel
+
+Usage: reverse -H <host> -P <port>
+
+Options:
+    -H, --host    Address to bind to
+    -P, --port    Local bind port
+    -h            Print this help statement
+
+Example:
+    reverse -H 127.0.0.1 -P 8080
+"#
+        ),
+        _ => println!("This is default"),
+    }
+}
+
+fn parse_flags<'a>(tokens: &[&'a str]) -> Result<HashMap<&'a str, &'a str>, RivotCliError> {
+    let mut map = HashMap::new();
+
+    let mut i = 0;
+
+    while i < tokens.len() {
+        if tokens[i].starts_with('-') {
+            let key;
+            let value;
+
+            if tokens[i].len() < 2 {
+                return Err(RivotCliError::InvalidArgError(format!(
+                    "Invalid argument: {}",
+                    tokens[i]
+                )));
+            }
+
+            if tokens[i][1..].starts_with('-') {
+                if tokens[i][1..].len() < 2 {
+                    return Err(RivotCliError::InvalidArgError(format!(
+                        "Invalid argument: {}",
+                        tokens[i]
+                    )));
+                }
+            }
+
+            key = tokens[i];
+
+            if i + 1 >= tokens.len() {
+                value = "";
+            } else {
+                if tokens[i + 1].starts_with('-') {
+                    value = "";
+                } else {
+                    value = tokens[i + 1];
+                }
+            }
+
+            map.insert(key, value);
+        }
+        i += 1;
+    }
+
+    Ok(map)
 }
 
 pub async fn run_cli(tx: mpsc::Sender<CliCommand>) {
@@ -91,33 +148,82 @@ pub async fn run_cli(tx: mpsc::Sender<CliCommand>) {
                 }
             }
 
-            let split = line.trim().split(' ').collect::<Vec<&str>>();
+            let tokens = line.trim().split_whitespace().collect::<Vec<&str>>();
 
-            match split[0] {
+            if tokens.len() < 1 {
+                continue;
+            }
+
+            println!("Tokens: {:?}", tokens);
+
+            match tokens[0] {
+                "help" => {
+                    print_help(tokens[0]);
+                }
                 "quit" => {
                     tx.blocking_send(CliCommand::Quit).unwrap();
                     break;
                 }
-                "help" => match split.get(1).map(|s| *s) {
-                    None => println!("{}", CliCommand::help()),
-                    Some("forward") => println!("{}", CliCommand::help_forward()),
-                    Some("reverse") => println!("{}", CliCommand::help_reverse()),
-                    Some(cmd) => println!("Unknown command: {cmd}"),
-                },
                 "forward" => {
-                    if split.len() < 2 {
-                        return;
+                    let flags = match parse_flags(&tokens[1..]) {
+                        Ok(map) => map,
+                        Err(e) => {
+                            println!("{e}");
+                            print_help(tokens[0]);
+                            continue;
+                        }
+                    };
+                    if flags.is_empty() {
+                        print_help(tokens[0]);
+                        continue;
                     }
+                    if let Some(_help) = flags.get("-h") {
+                        print_help(tokens[0]);
+                        continue;
+                    }
+                    let Some(host) = flags.get("-H").or_else(|| flags.get("--host")) else {
+                        print_help(tokens[0]);
+                        continue;
+                    };
+                    let Some(port) = flags.get("-P").or_else(|| flags.get("--port")) else {
+                        print_help(tokens[0]);
+                        continue;
+                    };
+
                     tx.blocking_send(CliCommand::Forward {
-                        host: "127.0.0.1".to_string(),
-                        port: 4444,
+                        host: host.to_string(),
+                        port: port.parse().unwrap(),
                     })
                     .unwrap();
                 }
                 "reverse" => {
+                    let flags = match parse_flags(&tokens[1..]) {
+                        Ok(map) => map,
+                        Err(e) => {
+                            println!("{e}");
+                            print_help(tokens[0]);
+                            continue;
+                        }
+                    };
+                    if flags.is_empty() {
+                        print_help(tokens[0]);
+                        continue;
+                    }
+                    if let Some(_help) = flags.get("-h") {
+                        print_help(tokens[0]);
+                        continue;
+                    }
+                    let Some(host) = flags.get("-H").or_else(|| flags.get("--host")) else {
+                        print_help(tokens[0]);
+                        continue;
+                    };
+                    let Some(port) = flags.get("-P").or_else(|| flags.get("--port")) else {
+                        print_help(tokens[0]);
+                        continue;
+                    };
                     tx.blocking_send(CliCommand::Reverse {
-                        host: "127.0.0.1".to_string(),
-                        port: 4444,
+                        host: host.to_string(),
+                        port: port.parse().unwrap(),
                     })
                     .unwrap();
                 }
