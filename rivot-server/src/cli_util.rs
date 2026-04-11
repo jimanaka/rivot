@@ -1,7 +1,9 @@
 use crate::error::RivotCliError;
+use crate::establish_connections::ConnectionMap;
 use reedline::{Prompt, PromptEditMode, PromptHistorySearch, Reedline, Signal};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 use tokio::task;
 
@@ -38,13 +40,23 @@ impl Prompt for RivotPrompt {
     }
 }
 
+#[derive(Tabled)]
+pub struct ConnectionRow {
+    #[tabled(rename = "ID")]
+    name: String,
+    #[tabled(rename = "Type")]
+    kind: String,
+}
+
 fn print_help(command: &str) {
     match command {
         "help" => println!(
             r#"
 forward - Start a forward tunnel
 reverse - Start a reverse tunnel
-help    - Print this help statement"#
+ls      - List active connections
+help    - Print this help statement
+"#
         ),
         "forward" => println!(
             r#"
@@ -74,6 +86,19 @@ Options:
 
 Example:
     reverse -H 127.0.0.1 -P 8080
+"#
+        ),
+        "ls" => println!(
+            r#"
+List active connections
+
+Usage: ls
+
+Options:
+    -h            Print this help statement
+
+Example:
+    ls                
 "#
         ),
         _ => println!("This is default"),
@@ -126,7 +151,7 @@ fn parse_flags<'a>(tokens: &[&'a str]) -> Result<HashMap<&'a str, &'a str>, Rivo
     Ok(map)
 }
 
-pub async fn run_cli(tx: mpsc::Sender<CliCommand>) {
+pub async fn run_cli(tx: mpsc::Sender<CliCommand>, connections_map: ConnectionMap) {
     task::spawn_blocking(move || {
         let mut line = String::new();
         let mut line_editor = Reedline::create();
@@ -163,6 +188,34 @@ pub async fn run_cli(tx: mpsc::Sender<CliCommand>) {
                 "quit" => {
                     tx.blocking_send(CliCommand::Quit).unwrap();
                     break;
+                }
+                "ls" => {
+                    let flags = match parse_flags(&tokens[1..]) {
+                        Ok(map) => map,
+                        Err(e) => {
+                            println!("{e}");
+                            print_help(tokens[0]);
+                            continue;
+                        }
+                    };
+                    if let Some(_help) = flags.get("-h") {
+                        print_help(tokens[0]);
+                        continue;
+                    }
+
+                    let rows: Vec<ConnectionRow> = connections_map
+                        .iter()
+                        .map(|entry| ConnectionRow {
+                            name: entry.key().clone(),
+                            kind: entry.value().kind.to_string(),
+                        })
+                        .collect();
+
+                    if rows.is_empty() {
+                        println!("No active connections");
+                    } else {
+                        println!("{}", Table::new(rows));
+                    }
                 }
                 "forward" => {
                     let flags = match parse_flags(&tokens[1..]) {
